@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>NeptuneNet – AI-Powered Marine Ecosystem Impact Predictor</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #f0f4f8; /* A lighter background for day mode */
+            color: #1e293b; /* Darker text for day mode */
+        }
+        .glass-panel {
+            background: rgba(255, 255, 255, 0.6); /* Lighter, glassy panel */
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(0, 0, 0, 0.1);
+        }
+        #map-container {
+            background-color: #a7d7f9; /* A light blue for the ocean fallback */
+            position: relative;
+            width: 100%;
+            aspect-ratio: 2 / 1; 
+            z-index: 0;
+        }
+        /* Adjust popups for day mode */
+        .leaflet-popup-content-wrapper {
+            background: #ffffff;
+            color: #1e293b;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        }
+        .leaflet-popup-tip {
+            background: #ffffff;
+        }
+        .leaflet-popup-close-button {
+            color: #1e293b !important;
+        }
+        .dot {
+            height: 12px;
+            width: 12px;
+            border-radius: 50%;
+            display: inline-block;
+            margin-right: 8px;
+            vertical-align: middle;
+        }
+        .dot-blue { background-color: #3b82f6; box-shadow: 0 0 6px #3b82f6; }
+        .dot-yellow { background-color: #facc15; box-shadow: 0 0 6px #facc15; }
+        .dot-red { background-color: #ef4444; box-shadow: 0 0 6px #ef4444; }
+        .dot-purple { background-color: #a855f7; box-shadow: 0 0 6px #a855f7; }
+    </style>
+</head>
+<body class="antialiased">
+
+    <!-- Main Application Container -->
+    <div class="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+
+        <!-- Header -->
+        <header class="text-center mb-8">
+            <h1 class="text-4xl md:text-5xl font-bold tracking-tight text-slate-900">NeptuneNet</h1>
+            <p class="mt-2 text-lg text-slate-600">AI-Powered Marine Ecosystem Impact Predictor</p>
+        </header>
+
+        <!-- Main Content: Map and Info Panels -->
+        <main>
+            <!-- Map Visualization -->
+            <div id="map-container" class="rounded-lg shadow-2xl shadow-blue-500/10 overflow-hidden border border-gray-200">
+                <!-- This hidden canvas is a clever trick to detect land vs. ocean -->
+                <canvas id="maskCanvas" class="hidden"></canvas>
+            </div>
+
+            <!-- Information & Legend Panel -->
+            <div class="mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+                
+                <!-- Panel 1: Legend -->
+                <div class="glass-panel rounded-lg p-6">
+                    <h2 class="text-lg font-semibold text-slate-800 mb-2">Debris & Impact Legend</h2>
+                    <ul class="space-y-3 text-slate-700 mt-4">
+                        <li class="flex items-center"><span class="dot dot-blue"></span> Low Impact (0-7 days)</li>
+                        <li class="flex items-center"><span class="dot dot-yellow"></span> Medium Impact (7-30 days)</li>
+                        <li class="flex items-center"><span class="dot dot-red"></span> High Impact (30+ days)</li>
+                        <li class="flex items-center"><span class="dot dot-purple"></span> Oil Spill (Any Age)</li>
+                    </ul>
+                </div>
+
+                <!-- Panel 2: Debris Statistics -->
+                <div class="glass-panel rounded-lg p-6">
+                    <h2 class="text-lg font-semibold text-slate-800 mb-4">Generated Debris Statistics</h2>
+                    <div class="space-y-3 text-slate-700">
+                        <p>Total Debris Paths: <span id="debris-count" class="font-bold text-slate-900">0</span></p>
+                        <p>Plastic/Other Points: <span id="plastic-count" class="font-bold text-sky-600">0</span></p>
+                        <p>Oil Spills: <span id="oil-count" class="font-bold text-purple-600">0</span></p>
+                    </div>
+                </div>
+
+                <!-- Panel 3: About -->
+                 <div class="glass-panel rounded-lg p-6">
+                    <h2 class="text-lg font-semibold text-slate-800 mb-4">About This Simulation</h2>
+                    <p class="text-slate-600 text-sm">This is a conceptual demonstration of NeptuneNet. It generates static paths for different types of marine debris, with colors indicating the increasing environmental impact over time as it drifts in the ocean.</p>
+                </div>
+
+            </div>
+        </main>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const maskCanvas = document.getElementById('maskCanvas');
+            const maskCtx = maskCanvas.getContext('2d');
+            const mapContainer = document.getElementById('map-container');
+            let maskImageData = null;
+            let canvasSize = { width: 0, height: 0 };
+
+            // --- INITIALIZE LEAFLET MAP ---
+            const map = L.map('map-container', {
+                center: [20, 0],
+                zoom: 2,
+                attributionControl: false,
+                maxBounds: [[-90, -180], [90, 180]], // Sets the boundaries of the map
+                maxBoundsViscosity: 1.0 // Makes the bounds solid
+            });
+
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+            
+            const mapImage = new Image();
+            mapImage.crossOrigin = "Anonymous";
+            mapImage.src = 'https://i.imgur.com/2A5tE9A.png';
+
+            mapImage.onload = function() {
+                const size = map.getSize();
+                // Handle race condition where map container might not have a size yet
+                if (size.x === 0 || size.y === 0) {
+                    console.warn("Map container has no size yet. Retrying in 100ms.");
+                    setTimeout(mapImage.onload, 100); // Retry this function
+                    return;
+                }
+
+                canvasSize.width = maskCanvas.width = size.x;
+                canvasSize.height = maskCanvas.height = size.y;
+
+                maskCtx.drawImage(mapImage, 0, 0, canvasSize.width, canvasSize.height);
+                
+                try {
+                    maskImageData = maskCtx.getImageData(0, 0, canvasSize.width, canvasSize.height);
+                    plotGarbagePaths();
+                } catch (e) {
+                    console.error("Failed to get image data from canvas:", e);
+                }
+            };
+
+            function isPixelLand(x, y) {
+                 if (!maskImageData) return true; // Default to land if not ready
+                 if (x < 0 || x >= canvasSize.width || y < 0 || y >= canvasSize.height) return true; // Out of bounds is land
+
+                 const pixelIndex = (Math.floor(y) * canvasSize.width + Math.floor(x)) * 4;
+                 if (pixelIndex >= maskImageData.data.length || pixelIndex < 0) return true;
+
+                 const r = maskImageData.data[pixelIndex];
+                 return r > 45;
+            }
+
+            function isLand(x, y) {
+                if (y / canvasSize.height > 0.85) return true; // Exclude Antarctic
+                if (isPixelLand(x, y)) return true;
+
+                // --- Area Scan Logic ---
+                // Check a small radius around the point to see if it's landlocked
+                const radius = 8; // Scan 8 pixels around (Increased from 5)
+                const step = 2;
+                let landNeighbors = 0;
+                let totalNeighbors = 0;
+
+                for (let dx = -radius; dx <= radius; dx += step) {
+                    for (let dy = -radius; dy <= radius; dy += step) {
+                        if (dx === 0 && dy === 0) continue;
+                        if (isPixelLand(x + dx, y + dy)) {
+                            landNeighbors++;
+                        }
+                        totalNeighbors++;
+                    }
+                }
+                // If more than 40% of neighbors are land, consider it a lake/bay
+                return (landNeighbors / totalNeighbors) > 0.4;
+            }
+
+            function getRandomOceanCoord() {
+                let lat, lon, point, attempts = 0;
+                do {
+                    lat = (Math.random() * 140) - 70;
+                    lon = (Math.random() * 360) - 180;
+                    point = map.latLngToContainerPoint([lat, lon]);
+                    attempts++;
+                } while (isLand(point.x, point.y) && attempts < 200);
+                
+                if(attempts >= 200) return { lat: 20, lon: -150 }; // Fallback
+
+                return { lat, lon };
+            }
+
+            function getColor(type, timestamp) {
+                const now = new Date();
+                const time = new Date(timestamp);
+                const ageDays = (now - time) / (1000 * 60 * 60 * 24);
+
+                if (type === 'oil') return '#a855f7';
+                if (ageDays < 7) return '#3b82f6'; // Blue
+                if (ageDays < 30) return '#facc15'; // Yellow
+                return '#ef4444'; // Red
+            }
+
+            function generateGarbageData(count) {
+                const data = [];
+                const now = new Date();
+                
+                // Control number of oil spills
+                let oilSpillCount = Math.floor(Math.random() * 2) + 1; // 1 or 2
+                let plasticCount = count - oilSpillCount;
+
+                const types = Array(oilSpillCount).fill('oil').concat(Array(plasticCount).fill('plastic'));
+                // Shuffle types
+                for (let i = types.length - 1; i > 0; i--) {
+                    const j = Math.floor(Math.random() * (i + 1));
+                    [types[i], types[j]] = [types[j], types[i]];
+                }
+
+
+                for (const type of types) {
+                    const path = [];
+                    let { lat: currLat, lon: currLon } = getRandomOceanCoord();
+                    let timestamp = new Date(now.getTime() - Math.random() * 90 * 24 * 60 * 60 * 1000); // Up to 90 days ago
+
+                    const segments = 5 + Math.floor(Math.random() * 5);
+                    for (let j = 0; j < segments; j++) {
+                        path.push({
+                            lat: currLat,
+                            lon: currLon,
+                            timestamp: timestamp.toISOString()
+                        });
+                        
+                        const lastLat = currLat;
+                        const lastLon = currLon;
+                        let attempts = 0;
+
+                        do {
+                            currLat = lastLat + (Math.random() - 0.5) * 5;
+                            currLon = lastLon + (Math.random() - 0.5) * 5;
+                            const point = map.latLngToContainerPoint([currLat, currLon]);
+                            
+                            if (!isLand(point.x, point.y)) break; 
+                            attempts++;
+                        } while (attempts < 10);
+
+                        if (attempts >= 10) break;
+                        
+                        timestamp = new Date(timestamp.getTime() + (1 + Math.random() * 5) * 24 * 60 * 60 * 1000);
+                    }
+                    if(path.length > 1) data.push({ type, path });
+                }
+                
+                document.getElementById('debris-count').textContent = count;
+                document.getElementById('plastic-count').textContent = plasticCount;
+                document.getElementById('oil-count').textContent = oilSpillCount;
+
+                return data;
+            }
+
+            function plotGarbagePaths() {
+                const garbageData = generateGarbageData(8);
+
+                garbageData.forEach(item => {
+                    const path = item.path;
+
+                    // Plot graded trails
+                    for (let i = 0; i < path.length - 1; i++) {
+                        const startPoint = path[i];
+                        const endPoint = path[i+1];
+                        
+                        const startTime = new Date(startPoint.timestamp).getTime();
+                        const endTime = new Date(endPoint.timestamp).getTime();
+                        
+                        const subSegments = 10;
+                        for(let j = 0; j < subSegments; j++) {
+                            const ratio = j / subSegments;
+                            const nextRatio = (j + 1) / subSegments;
+
+                            const currentLat = startPoint.lat + (endPoint.lat - startPoint.lat) * ratio;
+                            const currentLon = startPoint.lon + (endPoint.lon - startPoint.lon) * ratio;
+                            
+                            // Check if the current trail segment is on land before drawing
+                            const currentPointOnMap = map.latLngToContainerPoint([currentLat, currentLon]);
+                            if (isLand(currentPointOnMap.x, currentPointOnMap.y)) {
+                                continue; // Skip this segment if it falls on land
+                            }
+
+                            const currentTime = new Date(startTime + (endTime - startTime) * ratio).toISOString();
+
+                            const nextLat = startPoint.lat + (endPoint.lat - startPoint.lat) * nextRatio;
+                            const nextLon = startPoint.lon + (endPoint.lon - startPoint.lon) * nextRatio;
+                            
+                            const color = getColor(item.type, currentTime);
+                            L.polyline([[currentLat, currentLon], [nextLat, nextLon]], {
+                                color: color,
+                                weight: 3,
+                                opacity: 0.8
+                            }).addTo(map);
+                        }
+                    }
+
+                    // Plot end marker
+                    const last = path[path.length - 1];
+                    // The marker color should reflect its current age, not the trail color
+                    const markerColor = getColor(item.type, new Date().toISOString());
+
+                     L.circleMarker([last.lat, last.lon], {
+                        radius: 5,
+                        color: markerColor,
+                        fillColor: markerColor,
+                        fillOpacity: 0.9
+                    }).addTo(map).bindPopup(`
+                        <b>Type:</b> ${item.type}<br>
+                        <b>Last Seen:</b> ${last.timestamp.split('T')[0]}
+                    `);
+                });
+            }
+        });
+    </script>
+</body>
+</html>
+
